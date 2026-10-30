@@ -38,6 +38,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vauth.foxyvpn.data.FxaAuthRepository
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.vauth.foxyvpn.data.AppLogger
 
 @Composable
 fun LoginScreen(
@@ -52,6 +55,7 @@ fun LoginScreen(
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val clipboardManager = LocalClipboardManager.current
 
     BackHandler(enabled = awaitingTwoFactor) {
         authRepository.clearPendingSession()
@@ -227,6 +231,25 @@ fun LoginScreen(
                         .padding(horizontal = 8.dp),
                 )
             }
+            Spacer(Modifier.padding(top = 16.dp))
+
+Button(
+    onClick = {
+        val logs = AppLogger.exportAsText()
+        val safeLogs = logs
+            .replace(
+                Regex("(?i)(password|token|authorization)\\s*[:=]\\s*[^\\s,]+"),
+                "$1=[REDACTED]"
+            )
+
+        clipboardManager.setText(AnnotatedString(safeLogs))
+        errorMessage = "Diagnostic logs copied. Review them before sharing."
+    },
+    modifier = Modifier.fillMaxWidth(),
+) {
+    Text("Copy diagnostic logs")
+}
+            
         }
     }
 }
