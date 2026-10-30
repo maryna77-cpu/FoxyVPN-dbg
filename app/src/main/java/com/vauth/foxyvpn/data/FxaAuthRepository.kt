@@ -267,24 +267,95 @@ class FxaAuthRepository(
 
         var response: Response = ControlPlaneHttp.client.newCall(buildRequest()).execute()
         var attempts = 1
-        while (response.code == 406 && attempts < FXA_MAX_CHALLENGE_ATTEMPTS) {
-            response.close()
-            challengeSolver.solveAndInstall()
-            response = ControlPlaneHttp.client.newCall(buildRequest()).execute()
-            attempts++
-        }
+        while (
+    response.code == 406 &&
+    attempts < FXA_MAX_CHALLENGE_ATTEMPTS
+) {
+    AppLogger.w(
+        TAG,
+        "HTTP 406 on $path; " +
+            "challenge attempt $attempts/" +
+            "$FXA_MAX_CHALLENGE_ATTEMPTS"
+    )
+
+    response.close()
+
+    try {
+        challengeSolver.solveAndInstall()
+
+        AppLogger.i(
+            TAG,
+            "Challenge solver completed for $path"
+        )
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AppLogger.e(
+            TAG,
+            "Challenge solver failed for $path: " +
+                "${e.javaClass.simpleName}: ${e.message}"
+        )
+        throw e
+    }
+
+    response = ControlPlaneHttp.client
+        .newCall(buildRequest())
+        .execute()
+
+    attempts++
+
+    AppLogger.i(
+        TAG,
+        "Retry $attempts for $path returned " +
+            "HTTP ${response.code}"
+    )
+}
 
         response.use { resp ->
-            val text = resp.body?.string().orEmpty()
-            if (resp.code >= 400) {
+    val text = resp.body?.string().orEmpty()
+    val contentType =
+        resp.header("Content-Type") ?: "unknown"
+
+    AppLogger.i(
+        TAG,
+        "FxA response: path=$path, " +
+            "status=${resp.code}, " +
+            "attempts=$attempts, " +
+            "contentType=$contentType, " +
+            "bodyChars=${text.length}"
+    )
+
+    if (resp.code >= 400) {
                 val errorBody = try {
                     JSONObject(text)
                 } catch (e: Exception) {
                     JSONObject()
                 }
                 val errno = if (errorBody.has("errno")) errorBody.optInt("errno") else null
-                val message = errorBody.optString("message", text.ifEmpty { "HTTP ${resp.code}" })
-                throw FxaApiError(message, errno, resp.code)
+               val serverMessage = errorBody
+    .optString("message", "")
+    .takeIf { it.isNotBlank() }
+
+val message = if (serverMessage != null) {
+    "HTTP ${resp.code}: $serverMessage"
+} else {
+    "HTTP ${resp.code}; path=$path; " +
+        "attempts=$attempts; " +
+        "contentType=$contentType; " +
+        "bodyChars=${text.length}"
+}
+
+AppLogger.w(
+    TAG,
+    "FxA request failed: path=$path, " +
+        "status=${resp.code}, " +
+        "attempts=$attempts, " +
+        "errno=${errno ?: "none"}, " +
+        "contentType=$contentType, " +
+        "bodyChars=${text.length}"
+)
+
+throw FxaApiError(message, errno, resp.code)
             }
             if (text.isEmpty()) return@withContext JSONObject()
             return@withContext JSONObject(text)
